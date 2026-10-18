@@ -1,0 +1,55 @@
+services:
+  - type: web
+    name: storyverse-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.lock.txt
+    startCommand: python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1 --no-access-log
+    healthCheckPath: /api/ready
+    autoDeploy: false
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.5
+      - key: APP_ENVIRONMENT
+        value: production
+      - key: APP_MODE
+        value: supabase
+      - key: PUBLIC_WRITES_ENABLED
+        value: "false"
+      - key: MODERATION_READY
+        value: "false"
+      - key: CORS_ORIGINS
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: AI_MODE
+        value: amd
+      - key: AMD_API_KEY
+        sync: false
+      - key: AMD_MODEL
+        value: DeepSeek-V4-Flash
+      - key: AMD_BASE_URL
+        value: https://developer.amd.com.cn/radeon/api/v1
+      - key: AI_USER_DAILY_LIMIT
+        value: "3"
+      - key: AI_GLOBAL_DAILY_LIMIT
+        value: "25"
+      - key: AI_REQUESTS_PER_MINUTE
+        value: "1"
+      - key: MAX_UPLOAD_BYTES
+        value: "4194304"
+      - key: SDXL_ENABLED
+        value: "false"
+      - key: SDXL_EXECUTION
+        value: worker
+      - key: SDXL_API_FLAVOR
+        value: comfyui
+      - key: WORKER_TOKEN
+        generateValue: true
+      - key: WORKER_LEASE_SECONDS
+        value: "300"

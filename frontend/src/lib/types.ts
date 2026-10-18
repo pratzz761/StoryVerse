@@ -1,0 +1,17 @@
+export const GENRES = ["Fantasy", "Sci-Fi", "Mystery", "Adventure", "Romance", "Horror", "Slice of Life"] as const;
+export const DIRECTIONS = ["Keep it going", "Add a twist", "Build the world", "Meet someone new"] as const;
+export type Profile = { id: string; display_name: string; bio: string; avatar_color: string; created_at: string };
+export type Attachment = { id: string; filename: string; mime_type: string; size_bytes: number; url: string };
+export type Panel = { id: string; image_url: string; caption: string };
+export type GeneratedPanelImage = { upload_id: string; provider: string; model: string; mime_type: string; width: number; height: number; seed: number; is_test_fixture?: boolean };
+export type ComicPrompt = { description: string; characters: string[]; location: string; camera: string; caption: string; image?: GeneratedPanelImage };
+export type AIData = { model: string; provider: string; is_test_fixture?: boolean; panels: ComicPrompt[]; scenes: {location: string; description: string; characters: string[]}[]; dialogue: {speaker: string; text: string}[]; memory?: {summary: {synopsis: string}}; memory_hash: string };
+export type Chapter = { id: string; position: number; title: string; narrative: string; author: Profile; source: "manual" | "sample" | "demo_preview" | "ai_generated"; attachments: Attachment[]; panels: Panel[]; comic_prompts?: ComicPrompt[]; ai_metadata?: {model: string; is_test_fixture: boolean}; summary?: {synopsis: string; source: string}; created_at: string };
+export type Story = { id: string; owner_id: string; title: string; genre: string; description: string; cover_art: string; cover_url: string; owner: Profile; version: number; chapter_count: number; contributor_count: number; is_demo: boolean; created_at: string; updated_at: string; chapters?: Chapter[]; like_count?: number; bookmark_count?: number; follow_count?: number; reading_progress?: ReadingState };
+export type Draft = { pending_image_job?: string | null; id: string; title: string; narrative: string; story_id: string; story: Story; base_version: number; status: "draft" | "published"; source: "demo_preview" | "ai_generated"; revision: number; ai_data?: AIData; parent_draft_id?: string; generation_error?: string; image_generation_error?: string; attachments: Attachment[]; created_at: string; story_title?: string };
+export type Health = { status: string; mode: "demo" | "supabase"; ai_enabled: boolean; ai?: {enabled: boolean; mode: string; model: string | null; mocked: boolean; images: string; user_daily_limit: number; per_minute: number}; image_generation?: {enabled: boolean; provider: string; runtime_status: string; mocked: boolean; width: number; height: number; batch_size: number}; storage: string };
+export type Engagement = {story_id: string; like_count: number; bookmark_count: number; follow_count: number; like: boolean; bookmark: boolean; follow: boolean};
+export type ReadingState = {user_id: string; story_id: string; chapter_id: string; position: number; completed_position: number; layout: "webtoon" | "comic"; updated_at: string};
+export type Discovery = {items: Story[]; total: number; page: number; page_size: number; has_next: boolean};
+export type StoryBible = {version: number; data: {characters: {name: string; description: string; visual_description: string; personality_traits: string[]; relationships: string[]}[]; important_events: string[]; unresolved_plotlines: string[]}};
+export type Library = {created: Story[]; contributed: Story[]; bookmarked: Story[]; followed: Story[]; reading: Story[]};

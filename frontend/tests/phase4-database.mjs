@@ -1,0 +1,83 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+
+export async function phase4(db, asUser, fails) {
+ await db.exec('reset role');
+ await db.exec(await readFile(new URL('../../supabase/migrations/202610170005_public_deployment.sql',import.meta.url),'utf8'));
+ const writer='33333333-3333-4333-8333-333333333333', moderator='44444444-4444-4444-8444-444444444444';
+ await db.query(`insert into auth.users(id) values($1),($2)`,[writer,moderator]);
+ await db.query(`insert into public.moderators values($1)`,[moderator]);
+ await db.exec(`update public.generation_jobs set expires_at=now()-interval '1 hour' where status='running'`);
+ await asUser(writer);
+ const sid=(await db.query(`select public.create_story('Deploy test','Fantasy','A real owner opening.','{}') id`)).rows[0].id;
+ const report=(await db.query(`select public.report_story($1,'spam','Review this story') r`,[sid])).rows[0].r;
+ assert.deepEqual((await db.query(`select public.report_story($1,'spam','Duplicate') r`,[sid])).rows[0].r,report);
+ await fails(()=>db.query(`select * from public.content_reports`),'42501');
+ await fails(()=>db.query(`insert into public.moderators values($1)`,[writer]),'42501');
+ await fails(()=>db.query(`select public.moderation_reports()`),'42501');
+ await fails(()=>db.query(`select public.moderate_story($1,true,'Pretend admin')`,[sid]),'42501');
+ const sourceId=(await db.query(`select public.create_contribution_preview($1,'The lantern opens','Keep it going',1,'{}') id`,[sid])).rows[0].id;
+ const source=(await db.query(`select public.generation_source($1) s`,[sourceId])).rows[0].s;
+ await asUser('', 'service_role');
+ const limits={global_daily:500,user_daily:100,per_minute:100,concurrency:2,lease_seconds:360};
+ const job=(await db.query(`select public.ai_reserve($1,$2,gen_random_uuid(),'image',0,'remote',$3) j`,[writer,sourceId,limits])).rows[0].j;
+ await db.query(`select public.image_enqueue($1,$2,0,42,'{"model":"test","width":768,"height":768,"steps":20}')`,[job.id,source]);
+ const worker='55555555-5555-4555-8555-555555555555';
+ assert.equal((await db.query('select public.image_worker_online(45) v')).rows[0].v,false);
+ const claim=(await db.query('select public.image_worker_claim($1,300) j',[worker])).rows[0].j;
+ assert.equal(claim.job_id,job.id);assert.ok(claim.lease);
+ assert.equal((await db.query('select public.image_worker_online(45) v')).rows[0].v,true);
+ assert.equal((await db.query('select public.image_worker_claim(gen_random_uuid(),300) j')).rows[0].j,null);
+ await fails(()=>db.query('select public.image_worker_job($1,gen_random_uuid())',[job.id]),'P0002');
+ await asUser(writer);
+ await fails(()=>db.query('select public.image_worker_claim($1,300)',[worker]),'42501');
+ await fails(()=>db.query('select * from public.image_queue'),'42501');
+ await asUser('', 'service_role');
+ await db.query('select public.image_worker_fail($1,$2,$3)',[job.id,claim.lease,'worker_failed']);
+ await fails(()=>db.query('select public.image_worker_job($1,$2)',[job.id,claim.lease]),'40001');
+ // Expiration is terminal; a callback from that GPU execution cannot publish.
+ const expires=(await db.query(`select public.ai_reserve($1,$2,gen_random_uuid(),'image',0,'expired',$3) j`,[writer,sourceId,limits])).rows[0].j;
+ await db.query(`select public.image_enqueue($1,$2,0,42,'{}')`,[expires.id,source]);
+ const lease=(await db.query('select public.image_worker_claim($1,30) j',[worker])).rows[0].j;
+ await db.exec('reset role');
+ await db.query(`update public.image_queue set lease_until=now()-interval '1 second' where job_id=$1`,[expires.id]);
+ await asUser('', 'service_role');
+ assert.equal((await db.query('select public.image_worker_claim($1,30) j',[worker])).rows[0].j,null);
+ await fails(()=>db.query('select public.image_worker_job($1,$2)',[expires.id,lease.lease]),'40001');
+ // Actual successful queue completion uses the original version-checked finish.
+ const done=(await db.query(`select public.ai_reserve($1,$2,gen_random_uuid(),'image',0,'success',$3) j`,[writer,sourceId,limits])).rows[0].j;
+ await db.query(`select public.image_enqueue($1,$2,0,42,'{"model":"mocked-db"}')`,[done.id,source]);
+ const doneLease=(await db.query('select public.image_worker_claim($1,300) j',[worker])).rows[0].j;
+ await db.exec('reset role');
+ await db.query(`insert into storage.objects(bucket_id,name) values('story-media',$1)`,[writer+'/'+done.id]);
+ await db.query(`insert into public.uploads(id,owner_id,filename,mime_type,size_bytes,storage_path) values($1,$2,'panel.png','image/png',100,$3)`,[done.id,writer,writer+'/'+done.id]);
+ const bible=(await db.query('select data from public.story_bibles where story_id=$1',[sid])).rows[0].data;
+ const payload={title:'A completed remote panel',narrative:'The lantern glowed by the pier.',bible_after:{...bible,characters:bible.characters||[]},memory_revision:0,
+   memory:{summary:{synopsis:'The lantern glows.'}},model:'mocked-db',is_test_fixture:true,
+   panels:[{description:'A lantern',image:{upload_id:done.id,mime_type:'image/png'}}]};
+ await asUser('', 'service_role');
+ const completed=(await db.query('select public.image_worker_finish($1,$2,$3) r',[done.id,doneLease.lease,payload])).rows[0].r;
+ assert.ok(completed.id);assert.equal(completed.replayed,false);
+ assert.deepEqual((await db.query('select public.image_worker_finish($1,$2,$3) r',[done.id,doneLease.lease,payload])).rows[0].r,{id:completed.id,replayed:true});
+ await asUser(writer);await db.query('select public.publish_chapter($1,1,true)',[completed.id]);
+ await asUser('', 'anon');
+ assert.equal((await db.query('select * from public.uploads where id=$1',[done.id])).rows.length,1);
+ await asUser(moderator);
+ assert.equal((await db.query('select public.moderation_reports() r')).rows[0].r[0].id,report.id);
+ await db.query(`select public.moderate_story($1,true,'Reported spam removed')`,[sid]);
+ await asUser('', 'anon');
+ assert.equal((await db.query('select * from public.stories where id=$1',[sid])).rows.length,0);
+ assert.equal((await db.query('select * from public.chapters where story_id=$1',[sid])).rows.length,0);
+ assert.equal((await db.query('select * from public.story_bibles where story_id=$1',[sid])).rows.length,0);
+ assert.equal((await db.query('select * from public.uploads where id=$1',[done.id])).rows.length,0);
+ assert.equal((await db.query('select * from storage.objects where name=$1',[writer+'/'+done.id])).rows.length,0);
+ assert.equal((await db.query(`select public.discover_stories('Deploy test',null,'recent',1,12) r`)).rows[0].r.total,0);
+ await asUser(writer);
+ await fails(()=>db.query(`select public.create_contribution_preview($1,'Hidden continuation','Keep it going',2,'{}')`,[sid]),'P0002');
+ await asUser(moderator);await db.query(`select public.moderate_story($1,false,'Review complete restored')`,[sid]);
+ await asUser('', 'anon');assert.equal((await db.query('select * from public.stories where id=$1',[sid])).rows.length,1);
+ await asUser(writer);
+ for(let i=0;i<4;i++) await db.query(`select public.create_story($1,'Fantasy','Opening','{}')`,['Quota '+i]);
+ await fails(()=>db.query(`select public.create_story('Too many','Fantasy','Opening','{}')`),'P0001');
+ console.log('PASS: Phase 4 migration; reports/idempotence/moderator authorization; hidden discovery/chapters/canon; database write quotas; service-only remote queue; one lease; worker offline/expiry; wrong lease rejection.');
+}
